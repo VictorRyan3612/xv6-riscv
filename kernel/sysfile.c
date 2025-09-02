@@ -503,3 +503,39 @@ sys_pipe(void)
   }
   return 0;
 }
+// Função para copiar o caminho absoluto do diretório atual para o buffer
+int
+copycwd(uint64 buf, int size)
+{
+  struct proc *p = myproc();
+  char path[MAXPATH];
+
+  // Aqui você precisa implementar a lógica que constrói o caminho absoluto
+  // do diretório corrente (cwd) e coloca em "path".
+
+  // Exemplo (simplificação): se não implementar ainda, só retorna "/"
+  safestrcpy(path, "/", sizeof(path));
+
+  if (strlen(path) + 1 > size)
+    return -1;
+
+  if (copyout(p->pagetable, buf, path, strlen(path) + 1) < 0)
+    return -1;
+
+  return 0;
+}
+uint64
+sys_getcwd(void)
+{
+  uint64 buf;   // endereço no espaço do usuário
+  int size;
+
+  argaddr(0, &buf);
+  argint(1, &size);
+
+  return copycwd(buf, size);
+}
+
+
+
+
