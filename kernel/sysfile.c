@@ -504,26 +504,131 @@ sys_pipe(void)
   return 0;
 }
 // Função para copiar o caminho absoluto do diretório atual para o buffer
+// Em kernel/sysfile.c
+// Requer: dirlookup, readi, idup, ilock/ iunlock/ iput/ iunlockput, namei,
+// strlen, memmove, safestrcpy, copyout, MAXPATH, DIRSIZ, struct dirent.
+
 int
-copycwd(uint64 buf, int size)
+copycwd(uint64 ubuf, int size)
 {
   struct proc *p = myproc();
-  char path[MAXPATH];
 
-  // Aqui você precisa implementar a lógica que constrói o caminho absoluto
-  // do diretório corrente (cwd) e coloca em "path".
+  // pilha de componentes (nomes) do caminho, em ordem invertida
+  char comps[32][DIRSIZ+1];
+  int depth = 0;
 
-  // Exemplo (simplificação): se não implementar ainda, só retorna "/"
-  safestrcpy(path, "/", sizeof(path));
+  // inode atual (cwd) e auxiliares
+  struct inode *ip = idup(p->cwd);   // +1 ref
+  struct inode *parent = 0;
+  struct inode *root = namei("/");   // raiz
 
-  if (strlen(path) + 1 > size)
+  if(ip == 0 || root == 0){
+    if(ip) iput(ip);
+    if(root) iput(root);
     return -1;
+  }
 
-  if (copyout(p->pagetable, buf, path, strlen(path) + 1) < 0)
+  ilock(ip); // travamos o cwd para ler metadados
+
+  // Sobe até a raiz coletando nomes
+  for(;;){
+    // chegou na raiz? (mesmo dev e mesmo inum)
+    if(ip->dev == root->dev && ip->inum == root->inum){
+      iunlock(ip);
+      iput(ip);      // -1 ref
+      break;
+    }
+
+    // pegar pai via ".."
+    uint child_inum = ip->inum;
+    parent = dirlookup(ip, "..", 0); // retorna inode do pai (destravado)
+    iunlock(ip);                     // não precisamos mais do filho travado
+    iput(ip);                        // -1 ref do filho
+
+    if(parent == 0){
+      iput(root);
+      return -1;
+    }
+
+    ilock(parent);
+
+    // varrer diretório do pai procurando a entrada cujo inum == child_inum
+    struct dirent de;
+    int found = 0;
+    for(uint off = 0; off < parent->size; off += sizeof(de)){
+      if(readi(parent, 0, (uint64)&de, off, sizeof(de)) != sizeof(de)){
+        // erro de leitura
+        iunlockput(parent); // unlock + put
+        iput(root);
+        return -1;
+      }
+      if(de.inum == 0) continue;
+      if(de.inum == child_inum){
+        // copiar nome (DIRSIZ chars, precisamos garantir NUL)
+        int n = DIRSIZ;
+        while(n > 0 && de.name[n-1] == 0) n--;  // aparar zeros no fim
+        if(n > DIRSIZ) n = DIRSIZ;
+        if(depth >= (int)(sizeof(comps)/sizeof(comps[0]))){
+          iunlockput(parent);
+          iput(root);
+          return -1; // caminho profundo demais pra nossa pilha
+        }
+        // zera e copia nome
+        for(int i = 0; i < DIRSIZ+1; i++) comps[depth][i] = 0;
+        memmove(comps[depth], de.name, n);
+        depth++;
+        found = 1;
+        break;
+      }
+    }
+
+    // Próxima iteração: agora o "ip" passa a ser o pai
+    if(!found){
+      iunlockput(parent);
+      iput(root);
+      return -1;
+    }
+    // mantém o pai travado para próxima volta
+    ip = parent;     // ip (travado) vira o atual
+    parent = 0;
+    // volta pro topo do loop
+  }
+
+  // Montar a string final: "/" + comps em ordem reversa, separados por '/'
+  char out[MAXPATH];
+  int pos = 0;
+  out[pos++] = '/';
+
+  for(int i = depth - 1; i >= 0; i--){
+    int n = strlen(comps[i]);
+    if(n == 0) continue; // ignora componentes vazios (defensivo)
+    if(pos + n + 1 >= MAXPATH){
+      iput(root);
+      return -1; // sem espaço
+    }
+    memmove(out + pos, comps[i], n);
+    pos += n;
+    if(i > 0) out[pos++] = '/';
+  }
+
+  out[pos] = 0;
+
+  // Caso especial: se depth==0, estamos na raiz → out já é "/"
+  // Copiar pro espaço do usuário
+  int outlen = strlen(out) + 1;
+  if(outlen > size){
+    iput(root);
     return -1;
+  }
+  if(copyout(p->pagetable, ubuf, out, outlen) < 0){
+    iput(root);
+    return -1;
+  }
 
+  iput(root);
   return 0;
 }
+
 uint64
 sys_getcwd(void)
 {
