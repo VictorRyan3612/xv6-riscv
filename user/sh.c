@@ -74,8 +74,20 @@ runcmd(struct cmd *cmd)
 
   case EXEC:
     ecmd = (struct execcmd*)cmd;
-    if(ecmd->argv[0] == 0)
+    if(ecmd->argv[0] == 0){
       exit(1);
+    }
+    // Implementa 'cd' como builtin
+    if(strcmp(ecmd->argv[0], "cd") == 0){
+      if(ecmd->argv[1] == 0){
+        fprintf(2, "cd: expected argument\n");
+      } else {
+        if(chdir(ecmd->argv[1]) < 0){
+          fprintf(2, "cd: cannot cd %s\n", ecmd->argv[1]);
+        }
+      }
+      exit(0);  // não faz fork/exec, só volta
+    }
     exec(ecmd->argv[0], ecmd->argv);
     fprintf(2, "exec %s failed\n", ecmd->argv[0]);
     break;
