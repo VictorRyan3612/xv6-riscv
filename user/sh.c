@@ -73,6 +73,8 @@ runcmd(struct cmd *cmd)
     panic("runcmd");
 
   case EXEC:
+  printf("switch EXEC\n");
+
     ecmd = (struct execcmd*)cmd;
     if(ecmd->argv[0] == 0){
       exit(1);
@@ -88,7 +90,19 @@ runcmd(struct cmd *cmd)
       }
       exit(0);  // não faz fork/exec, só volta
     }
-    exec(ecmd->argv[0], ecmd->argv);
+    // exec(ecmd->argv[0], ecmd->argv);
+
+
+    char path2[128];
+    path2[0] = '/';                   // coloca a barra
+    strcpy(path2 + 1, ecmd->argv[0]); // copia o resto
+    // printf("o path : %s\n", path2);
+
+    if(exec(ecmd->argv[0], ecmd->argv) < 0){
+        // se falhar, tenta com / na frente
+        exec(path2, ecmd->argv);
+    }
+
     fprintf(2, "exec %s failed\n", ecmd->argv[0]);
     break;
 
