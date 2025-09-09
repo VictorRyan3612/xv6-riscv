@@ -74,6 +74,9 @@ main(int argc, char *argv[])
   char buf[BSIZE];
   struct dinode din;
 
+  char *passwd_content = "root:0\nvictor:1\n";
+  char *shadow_content = "root:1234\nvictor:sen\n";
+
 
   static_assert(sizeof(int) == 4, "Integers must be 4 bytes!");
 
@@ -117,6 +120,7 @@ main(int argc, char *argv[])
   rootino = ialloc(T_DIR);
   assert(rootino == ROOTINO);
 
+
   bzero(&de, sizeof(de));
   de.inum = xshort(rootino);
   strcpy(de.name, ".");
@@ -126,6 +130,22 @@ main(int argc, char *argv[])
   de.inum = xshort(rootino);
   strcpy(de.name, "..");
   iappend(rootino, &de, sizeof(de));
+  // /passwd
+  inum = ialloc(T_FILE);
+  bzero(&de, sizeof(de));
+  de.inum = xshort(inum);
+  strncpy(de.name, "passwd", DIRSIZ);
+  iappend(rootino, &de, sizeof(de));
+  iappend(inum, passwd_content, strlen(passwd_content));
+
+  // /shadow
+  inum = ialloc(T_FILE);
+  bzero(&de, sizeof(de));
+  de.inum = xshort(inum);
+  strncpy(de.name, "shadow", DIRSIZ);
+  iappend(rootino, &de, sizeof(de));
+  iappend(inum, shadow_content, strlen(shadow_content));
+
 
   for(i = 2; i < argc; i++){
     // get rid of "user/"
