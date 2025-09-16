@@ -73,7 +73,7 @@ runcmd(struct cmd *cmd)
     panic("runcmd");
 
   case EXEC:
-  printf("switch EXEC\n");
+  // printf("switch EXEC\n");
 
     ecmd = (struct execcmd*)cmd;
     if(ecmd->argv[0] == 0){
@@ -106,15 +106,44 @@ runcmd(struct cmd *cmd)
     fprintf(2, "exec %s failed\n", ecmd->argv[0]);
     break;
 
-  case REDIR:
+case REDIR:
     rcmd = (struct redircmd*)cmd;
-    close(rcmd->fd);
-    if(open(rcmd->file, rcmd->mode) < 0){
-      fprintf(2, "open %s failed\n", rcmd->file);
-      exit(1);
+    int fd;
+    char aux[1024];
+    int n = 0;
+
+    if(rcmd->mode == (O_WRONLY|O_CREATE)) { // >>
+        // lê conteúdo atual
+        fd = open(rcmd->file, O_RDONLY);
+        if(fd >= 0){
+            n = read(fd, aux, sizeof(aux));
+            close(fd);
+        }
+        // abre arquivo para truncar
+        fd = open(rcmd->file, O_WRONLY|O_CREATE|O_TRUNC);
+        if(fd < 0){
+            fprintf(2, "open %s failed\n", rcmd->file);
+            exit(1);
+        }
+        // escreve conteúdo antigo
+        if(n > 0)
+            write(fd, aux, n);
+    } else {
+        fd = open(rcmd->file, rcmd->mode);
+        if(fd < 0){
+            fprintf(2, "open %s failed\n", rcmd->file);
+            exit(1);
+        }
     }
+
+    // redireciona stdout
+    close(rcmd->fd);
+    dup(fd);
+    close(fd);
+
     runcmd(rcmd->cmd);
     break;
+
 
   case LIST:
     lcmd = (struct listcmd*)cmd;
