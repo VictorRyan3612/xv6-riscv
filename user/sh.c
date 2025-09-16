@@ -13,6 +13,16 @@
 
 #define MAXARGS 10
 
+#define HISTORY_FILE "history"
+
+#define MAX_HISTORY 100
+#define MAX_CMD_LEN 128
+
+char history[MAX_HISTORY][MAX_CMD_LEN];
+int hist_count = 0;
+int hist_index = 0;
+
+
 struct cmd {
   int type;
 };
@@ -72,6 +82,28 @@ int append_open(char *file) {
   if(n > 0)
       write(fd, aux, n);
   return fd;
+}
+void history_add(char *buf){
+  // ---- Adiciona ao histórico ----
+  int fd = open(HISTORY_FILE, O_WRONLY | O_CREATE);
+  if(fd >= 0){
+    // lê conteúdo antigo
+    char aux[1024];
+    int n = read(open(HISTORY_FILE, O_RDONLY), aux, sizeof(aux));
+    close(open(HISTORY_FILE, O_RDONLY));
+
+    // abre truncando e escreve conteúdo antigo
+    int fdt = open(HISTORY_FILE, O_WRONLY | O_CREATE | O_TRUNC);
+    if(n > 0)
+      write(fdt, aux, n);
+
+    // escreve comando atual + newline
+    write(fdt, buf, strlen(buf));
+    write(fdt, "", 1);
+
+    close(fdt);
+  }
+  // ---- fim do histórico ----
 }
 // Execute cmd.  Never returns.
 void
@@ -201,6 +233,9 @@ getcmd(char *buf, int nbuf)
   gets(buf, nbuf);
   if(buf[0] == 0) // EOF
     return -1;
+
+  history_add(buf);
+  
   return 0;
 }
 
