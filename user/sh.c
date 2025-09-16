@@ -54,6 +54,25 @@ void panic(char*);
 struct cmd *parsecmd(char*);
 void runcmd(struct cmd*) __attribute__((noreturn));
 
+int append_open(char *file) {
+  char aux[2048];
+  int fd, n = 0;
+  fd = open(file, O_RDONLY);
+  if(fd >= 0){
+      n = read(fd, aux, sizeof(aux));
+      close(fd);
+  }
+  // abre arquivo para truncar
+  fd = open(file, O_WRONLY|O_CREATE|O_TRUNC);
+  if(fd < 0){
+      fprintf(2, "open %s failed\n", file);
+      exit(1);
+  }
+  // escreve conteúdo antigo
+  if(n > 0)
+      write(fd, aux, n);
+  return fd;
+}
 // Execute cmd.  Never returns.
 void
 runcmd(struct cmd *cmd)
@@ -109,25 +128,13 @@ runcmd(struct cmd *cmd)
 case REDIR:
     rcmd = (struct redircmd*)cmd;
     int fd;
-    char aux[1024];
-    int n = 0;
 
     if(rcmd->mode == (O_WRONLY|O_CREATE)) { // >>
-        // lê conteúdo atual
-        fd = open(rcmd->file, O_RDONLY);
-        if(fd >= 0){
-            n = read(fd, aux, sizeof(aux));
-            close(fd);
-        }
-        // abre arquivo para truncar
-        fd = open(rcmd->file, O_WRONLY|O_CREATE|O_TRUNC);
+        fd = append_open(rcmd -> file);
         if(fd < 0){
-            fprintf(2, "open %s failed\n", rcmd->file);
-            exit(1);
+          fprintf(2, "open %s failed\n", rcmd->file);
+          exit(1);
         }
-        // escreve conteúdo antigo
-        if(n > 0)
-            write(fd, aux, n);
     } else {
         fd = open(rcmd->file, rcmd->mode);
         if(fd < 0){
