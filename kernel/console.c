@@ -136,52 +136,81 @@ consoleread(int user_dst, uint64 dst, int n)
 // do erase/kill processing, append to cons.buf,
 // wake up consoleread() if a whole line has arrived.
 //
+static int esc_state = 0; // adiciona no topo do arquivo
 void
 consoleintr(int c)
 {
   acquire(&cons.lock);
 
-  switch(c){
-  case C('P'):  // Print process list.
-    procdump();
-    break;
-  case C('U'):  // Kill line.
-    while(cons.e != cons.w &&
-          cons.buf[(cons.e-1) % INPUT_BUF_SIZE] != '\n'){
-      cons.e--;
-      consputc(BACKSPACE);
-    }
-    break;
-  case C('H'): // Backspace
-  case '\x7f': // Delete key
-    if(cons.e != cons.w){
-      cons.e--;
-      consputc(BACKSPACE);
-    }
-    break;
-  default:
-    if(c != 0 && cons.e-cons.r < INPUT_BUF_SIZE){
-      c = (c == '\r') ? '\n' : c;
-
-      // echo back to the user.
-      consputc(c);
-
-      // store for consumption by consoleread().
-      cons.buf[cons.e++ % INPUT_BUF_SIZE] = c;
-
-      if(c == '\n' || c == C('D') || cons.e-cons.r == INPUT_BUF_SIZE){
-        // wake up consoleread() if a whole line (or end-of-file)
-        // has arrived.
-        cons.w = cons.e;
-        wakeup(&cons.r);
+  if(esc_state == 0){
+    switch(c){
+    case C('P'):  // Print process list.
+      procdump();
+      break;
+    case C('U'):  // Kill line.
+      while(cons.e != cons.w &&
+            cons.buf[(cons.e-1) % INPUT_BUF_SIZE] != '\n'){
+        cons.e--;
+        consputc(BACKSPACE);
       }
+      break;
+    case C('H'): // Backspace
+    case '\x7f': // Delete key
+      if(cons.e != cons.w){
+        cons.e--;
+        consputc(BACKSPACE);
+      }
+      break;
+    case 27: // ESC
+      esc_state = 1; // primeira parte da sequência ANSI
+      break;
+    default:
+      if(c != 0 && cons.e-cons.r < INPUT_BUF_SIZE){
+        c = (c == '\r') ? '\n' : c;
+
+        // echo back
+        consputc(c);
+
+        // store for consoleread()
+        cons.buf[cons.e++ % INPUT_BUF_SIZE] = c;
+
+        if(c == '\n' || c == C('D') || cons.e-cons.r == INPUT_BUF_SIZE){
+          cons.w = cons.e;
+          wakeup(&cons.r);
+        }
+      }
+      break;
     }
-    break;
+  } else if(esc_state == 1){
+    if(c == '['){
+      esc_state = 2; // esperando A/B/C/D
+    } else {
+      esc_state = 0; // não era seta
+    }
+  } else if(esc_state == 2){
+    switch(c){
+    case 'A':  // seta para cima
+      // shell_history_arrow(1);  // histórico anterior
+      break;
+    case 'B':  // seta para baixo
+      // shell_history_arrow(0);  // próximo histórico
+      break;
+    // case 'C':  // seta para direita
+    //   if(cons.e - cons.r < INPUT_BUF_SIZE)
+    //     cons.e++; // anda sobre os caracteres
+    //   break;
+    // case 'D':  // seta para esquerda
+    //   if(cons.e > cons.r)
+    //     cons.e--; // anda sobre os caracteres
+    //   break;
+    default:
+      break; // ignora
+    }
+    esc_state = 0; // volta ao estado normal
   }
-  
+
   release(&cons.lock);
 }
-
 void
 consoleinit(void)
 {
