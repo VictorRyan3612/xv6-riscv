@@ -18,10 +18,14 @@
 #define MAX_HISTORY 100
 #define MAX_CMD_LEN 128
 
+#define PATH_MAX 256
+
 char history[MAX_HISTORY][MAX_CMD_LEN];
 int hist_count = 0;
 int hist_index = 0;
 
+// PATH (default)
+static char shell_path[PATH_MAX] = "/bin";
 
 struct cmd {
   int type;
@@ -105,6 +109,210 @@ void history_add(char *buf){
   }
   // ---- fim do histórico ----
 }
+// load history from file into history[][] (call once at shell startup)
+void history_load(void) {
+  int fd = open(HISTORY_FILE, 0);
+  if(fd < 0) return;
+  char buf[4096];
+  int n = read(fd, buf, sizeof(buf));
+  close(fd);
+  if(n <= 0) return;
+  int pos = 0;
+  while(pos < n && hist_count < MAX_HISTORY) {
+    int len = 0;
+    while(pos < n && buf[pos] != '\n' && len < MAX_CMD_LEN-1) {
+      history[hist_count][len++] = buf[pos++];
+    }
+    history[hist_count][len] = '\0';
+    hist_count++;
+    if(pos < n && buf[pos] == '\n') pos++;
+  }
+}
+
+// append new line to history[] in memory
+void history_add_mem(const char *line) {
+  if(!line || !*line) return;
+  if(hist_count < MAX_HISTORY) {
+    // safe copy
+    int i=0;
+    for(; i < MAX_CMD_LEN-1 && line[i]; i++) history[hist_count][i] = line[i];
+    history[hist_count][i] = '\0';
+    hist_count++;
+  } else {
+    // rotate up
+    int i;
+    for(i = 1; i < MAX_HISTORY; i++) strcpy(history[i-1], history[i]);
+    // append at end
+    int i2=0;
+    for(; i2 < MAX_CMD_LEN-1 && line[i2]; i2++) history[MAX_HISTORY-1][i2] = line[i2];
+    history[MAX_HISTORY-1][i2] = '\0';
+  }
+}
+
+// append new line to history file (simple read->rewrite method)
+void history_append_file(const char *line) {
+  if(!line) return;
+  char aux[4096];
+  int n = 0;
+  int fd = open(HISTORY_FILE, 0);
+  if(fd >= 0) {
+    n = read(fd, aux, sizeof(aux));
+    close(fd);
+  }
+  int f = open(HISTORY_FILE, O_WRONLY | O_CREATE | O_TRUNC);
+  if(f < 0) return;
+  if(n > 0) write(f, aux, n);
+  write(f, line, strlen(line));
+  write(f, "\n", 1);
+  close(f);
+}
+
+// redraw helper: prints "\r$ " + s and clears leftover chars
+static void redraw_prompt(const char *s, int *prev_len) {
+  int newlen = strlen(s);
+  // print prompt+text
+  write(1, "\r$ ", 3);
+  write(1, s, newlen);
+  // clear leftover
+  if(*prev_len > newlen) {
+    int k;
+    for(k = 0; k < (*prev_len - newlen); k++) write(1, " ", 1);
+    // reposition after printed text
+    write(1, "\r$ ", 3);
+    write(1, s, newlen);
+  }
+  *prev_len = newlen;
+}
+
+// ---------------- PATH helpers ----------------
+void set_path(const char *p) {
+  int i;
+  for (i = 0; i < PATH_MAX-1 && p[i]; i++) shell_path[i] = p[i];
+  shell_path[i] = '\0';
+}
+
+void print_path(void) {
+  write(1, "PATH=", 5);
+  write(1, shell_path, strlen(shell_path));
+  write(1, "\n", 1);
+}
+
+// try to exec cmd by searching shell_path directories (returns -1 if not found)
+// note: exec replaces process on success so function returns only on failure
+int find_in_path(char *cmd, char **argv) {
+  char dirbuf[PATH_MAX];
+  char path2[PATH_MAX];
+  int len = strlen(shell_path);
+  int i = 0;
+
+  while (i <= len) {
+    // extract next dir into dirbuf
+    int j = 0;
+    while (i <= len && shell_path[i] != ':' && shell_path[i] != '\0') {
+      if (j < PATH_MAX-2) dirbuf[j++] = shell_path[i];
+      i++;
+    }
+    dirbuf[j] = 0;
+
+    // interpret empty dir as "."
+    if (j == 0) {
+      dirbuf[0] = '.';
+      dirbuf[1] = 0;
+    }
+
+    // build path2 = dirbuf + "/" + cmd (with bounds checking)
+    int p = 0;
+    int k = 0;
+    while (dirbuf[k] && p < PATH_MAX-1) path2[p++] = dirbuf[k++];
+    if (p < PATH_MAX-1) path2[p++] = '/';
+    k = 0;
+    while (cmd[k] && p < PATH_MAX-1) path2[p++] = cmd[k++];
+    path2[p] = 0;
+
+    // try exec
+    exec(path2, argv);
+    // if exec returns, it failed -> try next
+
+    if (shell_path[i] == ':') i++;
+  }
+
+  return -1;
+}
+
+// ==== helpers do mesmo jeito que na Versão A ====
+/* Reuse history_load(), history_add_mem(), history_append_file(), redraw_prompt() */
+
+int getcmd_with_kernel_sentinals(char *buf, int nbuf) {
+  int i = 0;
+  int prev_len = 0;
+  int hist_index = hist_count;
+  char c;
+
+  write(2, "$ ", 2);
+  memset(buf, 0, nbuf);
+
+  while(1) {
+    if(read(0, &c, 1) != 1) return -1;
+
+    if(c == '\n') {
+      buf[i] = 0;
+      write(1, "\n", 1);
+      if(i > 0) {
+        history_add_mem(buf);
+        history_append_file(buf);
+      }
+      return 0;
+    }
+
+    // Kernel-intercepted sentinels (single byte)
+    if(c == 1) { // KEY_HISTORY_UP
+      if(hist_count == 0) continue;
+      if(hist_index > 0) hist_index--;
+      if(hist_index < hist_count) {
+        int len = strlen(history[hist_index]);
+        int j;
+        for(j=0; j < nbuf-1 && j < len; j++) buf[j] = history[hist_index][j];
+        buf[j] = 0;
+        i = strlen(buf);
+        redraw_prompt(buf, &prev_len);
+      }
+      continue;
+    } else if(c == 2) { // KEY_HISTORY_DOWN
+      if(hist_count == 0) continue;
+      if(hist_index < hist_count) hist_index++;
+      if(hist_index == hist_count) {
+        buf[0] = 0; i = 0;
+        redraw_prompt("", &prev_len);
+      } else {
+        int len = strlen(history[hist_index]);
+        int j;
+        for(j=0; j < nbuf-1 && j < len; j++) buf[j] = history[hist_index][j];
+        buf[j] = 0;
+        i = strlen(buf);
+        redraw_prompt(buf, &prev_len);
+      }
+      continue;
+    }
+
+    // Backspace
+    if(c == 0x7f || c == 8) {
+      if(i > 0) {
+        i--;
+        write(1, "\b \b", 3);
+        prev_len = (prev_len > 0) ? prev_len - 1 : 0;
+      }
+      continue;
+    }
+
+    // Normal char
+    if(c != 0 && i + 1 < nbuf) {
+      buf[i++] = c;
+      write(1, &c, 1);
+      prev_len++;
+    }
+  }
+}
+
 // Execute cmd.  Never returns.
 void
 runcmd(struct cmd *cmd)
@@ -124,13 +332,12 @@ runcmd(struct cmd *cmd)
     panic("runcmd");
 
   case EXEC:
-  // printf("switch EXEC\n");
-
     ecmd = (struct execcmd*)cmd;
     if(ecmd->argv[0] == 0){
       exit(1);
     }
-    // Implementa 'cd' como builtin
+
+    // Builtin: cd
     if(strcmp(ecmd->argv[0], "cd") == 0){
       if(ecmd->argv[1] == 0){
         fprintf(2, "cd: expected argument\n");
@@ -139,19 +346,38 @@ runcmd(struct cmd *cmd)
           fprintf(2, "cd: cannot cd %s\n", ecmd->argv[1]);
         }
       }
-      exit(0);  // não faz fork/exec, só volta
+      exit(0);  // don't fork/exec, just return
     }
-    // exec(ecmd->argv[0], ecmd->argv);
 
+    // Builtin: setpath
+    if(strcmp(ecmd->argv[0], "setpath") == 0) {
+      if(ecmd->argv[1] == 0) {
+        fprintf(2, "usage: setpath dir:dir:...\n");
+      } else {
+        set_path(ecmd->argv[1]);
+      }
+      exit(0);
+    }
+    // Builtin: printpath
+    if(strcmp(ecmd->argv[0], "printpath") == 0) {
+      print_path();
+      exit(0);
+    }
 
-    char path2[128];
-    path2[0] = '/';                   // coloca a barra
-    strcpy(path2 + 1, ecmd->argv[0]); // copia o resto
-    // printf("o path : %s\n", path2);
-
-    if(exec(ecmd->argv[0], ecmd->argv) < 0){
-        // se falhar, tenta com / na frente
-        exec(path2, ecmd->argv);
+    // If command contains '/', try to exec it directly
+    if(strchr(ecmd->argv[0], '/')) {
+      exec(ecmd->argv[0], ecmd->argv);
+      // if exec returns -> failed, fall through to error
+    } else {
+      // Try lookup in PATH
+      if(find_in_path(ecmd->argv[0], ecmd->argv) < 0) {
+        // not found in PATH; as fallback try /<cmd> (root) like you had before
+        char fallback[128];
+        fallback[0] = '/';
+        strncpy(fallback + 1, ecmd->argv[0], sizeof(fallback)-2);
+        fallback[sizeof(fallback)-1] = 0;
+        exec(fallback, ecmd->argv);
+      }
     }
 
     fprintf(2, "exec %s failed\n", ecmd->argv[0]);
@@ -159,6 +385,7 @@ runcmd(struct cmd *cmd)
 
 case REDIR:
     rcmd = (struct redircmd*)cmd;
+    {
     int fd;
 
     if(rcmd->mode == (O_WRONLY|O_CREATE)) { // >>
@@ -175,12 +402,13 @@ case REDIR:
         }
     }
 
-    // redireciona stdout
+    // redirect stdout
     close(rcmd->fd);
     dup(fd);
     close(fd);
 
     runcmd(rcmd->cmd);
+    }
     break;
 
 
@@ -235,16 +463,109 @@ getcmd(char *buf, int nbuf)
     return -1;
 
   history_add(buf);
-  
+
   return 0;
 }
+// ==== getcmd version A ====
+int getcmd_with_raw_arrows(char *buf, int nbuf) {
+  int i = 0;
+  int prev_len = 0;            // how many chars currently displayed after prompt
+  int hist_index = hist_count; // position for navigation (hist_count == "after last")
+  char c;
 
+  write(2, "$ ", 2);
+  memset(buf, 0, nbuf);
+
+  while(1) {
+    if(read(0, &c, 1) != 1) return -1;
+
+    if(c == '\n') {
+      buf[i] = 0;
+      write(1, "\n", 1);
+      if(i > 0) {
+        history_add_mem(buf);
+        history_append_file(buf);
+      }
+      return 0;
+    }
+
+    // ESC sequence handling (ESC '[' X)
+    if(c == 27) {
+      char s1 = 0, s2 = 0;
+      if(read(0, &s1, 1) != 1) continue;
+      if(read(0, &s2, 1) != 1) continue;
+      if(s1 == '[') {
+        if(s2 == 'A') {
+          // UP
+          if(hist_count == 0) {
+            ; // nothing
+          } else {
+            if(hist_index > 0) hist_index--;
+            if(hist_index < hist_count) {
+              // replace current buffer with history[hist_index]
+              int len = strlen(history[hist_index]);
+              // copy into buf
+              int j;
+              for(j=0; j < nbuf-1 && j < len; j++) buf[j] = history[hist_index][j];
+              buf[j] = 0;
+              i = strlen(buf);
+              redraw_prompt(buf, &prev_len);
+            }
+          }
+          continue;
+        } else if(s2 == 'B') {
+          // DOWN
+          if(hist_count == 0) {
+            ; // nothing
+          } else {
+            if(hist_index < hist_count) hist_index++;
+            if(hist_index == hist_count) {
+              // clear line
+              buf[0] = 0; i = 0;
+              redraw_prompt("", &prev_len);
+            } else {
+              int len = strlen(history[hist_index]);
+              int j;
+              for(j=0; j < nbuf-1 && j < len; j++) buf[j] = history[hist_index][j];
+              buf[j] = 0;
+              i = strlen(buf);
+              redraw_prompt(buf, &prev_len);
+            }
+          }
+          continue;
+        } else {
+          // other ESC seq: ignore (or could handle left/right here)
+          continue;
+        }
+      }
+      continue;
+    }
+
+    // Backspace
+    if(c == 0x7f || c == 8) {
+      if(i > 0) {
+        i--;
+        // erase last char visually
+        write(1, "\b \b", 3);
+        prev_len = (prev_len > 0) ? prev_len - 1 : 0;
+      }
+      continue;
+    }
+
+    // Normal printable characters
+    if(c != 0 && i + 1 < nbuf) {
+      buf[i++] = c;
+      write(1, &c, 1);
+      prev_len++;
+    }
+  }
+}
 int
 main(void)
 {
   static char buf[100];
   int fd;
-
+  history_load();
   // Ensure that three file descriptors are open.
   while((fd = open("console", O_RDWR)) >= 0){
     if(fd >= 3){
@@ -270,7 +591,7 @@ main(void)
         runcmd(parsecmd(cmd));
       wait(0);
     }
-  }
+  } // ESC [ A B C D 
   exit(0);
 }
 

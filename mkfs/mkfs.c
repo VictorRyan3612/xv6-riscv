@@ -145,42 +145,67 @@ main(int argc, char *argv[])
   strncpy(de.name, "shadow", DIRSIZ);
   iappend(rootino, &de, sizeof(de));
   iappend(inum, shadow_content, strlen(shadow_content));
+  //bin
+  /// cria /bin
+uint binino = ialloc(T_DIR);
+
+bzero(&de, sizeof(de));
+de.inum = xshort(binino);
+strncpy(de.name, "bin", DIRSIZ);
+iappend(rootino, &de, sizeof(de));
+
+// "." em /bin
+bzero(&de, sizeof(de));
+de.inum = xshort(binino);
+strcpy(de.name, ".");
+iappend(binino, &de, sizeof(de));
+
+// ".." em /bin
+bzero(&de, sizeof(de));
+de.inum = xshort(rootino);
+strcpy(de.name, "..");
+iappend(binino, &de, sizeof(de));
 
 
-  for(i = 2; i < argc; i++){
-    // get rid of "user/"
-    char *shortname;
-    if(strncmp(argv[i], "user/", 5) == 0)
-      shortname = argv[i] + 5;
-    else
-      shortname = argv[i];
-    
-    assert(index(shortname, '/') == 0);
+  // antes do loop: já criou rootino e binino
+// ...
 
-    if((fd = open(argv[i], 0)) < 0)
-      die(argv[i]);
+for(i = 2; i < argc; i++){
+  // pega só o nome curto (sem user/ e sem bin/)
+  char *shortname;
+  if(strncmp(argv[i], "user/", 5) == 0)
+    shortname = argv[i] + 5;
+  else
+    shortname = argv[i];
 
-    // Skip leading _ in name when writing to file system.
-    // The binaries are named _rm, _cat, etc. to keep the
-    // build operating system from trying to execute them
-    // in place of system binaries like rm and cat.
-    if(shortname[0] == '_')
-      shortname += 1;
+  char *basename = strrchr(shortname, '/');
+  if(basename) basename++; else basename = shortname;
 
-    assert(strlen(shortname) <= DIRSIZ);
-    
-    inum = ialloc(T_FILE);
+  if((fd = open(argv[i], 0)) < 0)
+    die(argv[i]);
 
-    bzero(&de, sizeof(de));
-    de.inum = xshort(inum);
-    strncpy(de.name, shortname, DIRSIZ);
+  if(basename[0] == '_') basename++; // remove leading underscore
+
+  assert(strlen(basename) <= DIRSIZ);
+
+  inum = ialloc(T_FILE);
+  bzero(&de, sizeof(de));
+  de.inum = xshort(inum);
+  strncpy(de.name, basename, DIRSIZ);
+
+  // Se for "init", deixa na raiz; senão coloca em /bin
+  if(strcmp(basename, "init") == 0){
     iappend(rootino, &de, sizeof(de));
-
-    while((cc = read(fd, buf, sizeof(buf))) > 0)
-      iappend(inum, buf, cc);
-
-    close(fd);
+  } else {
+    iappend(binino, &de, sizeof(de));
   }
+
+  while((cc = read(fd, buf, sizeof(buf))) > 0)
+    iappend(inum, buf, cc);
+
+  close(fd);
+}
+
 
   // fix size of root inode dir
   rinode(rootino, &din);

@@ -91,7 +91,7 @@ main(void)
       // futuramente: setuid(uid);
 
       char *argv[] = { "sh", 0 };
-      exec("sh", argv);
+      exec("/bin/sh", argv);
       printf("login: exec sh failed\n");
       exit(1);
     } else {

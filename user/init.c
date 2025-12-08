@@ -31,7 +31,7 @@ main(void)
       exit(1);
     }
     if(pid == 0){
-      exec("login", argv);   // chama login
+      exec("/bin/login", argv);   // chama login
       printf("init: exec login failed\n");
       exit(1);
     }
