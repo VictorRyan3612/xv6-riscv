@@ -556,16 +556,64 @@ main(void)
       cmd++;
     if (*cmd == '\n') // is a blank command
       continue;
-    if(cmd[0] == 'c' && cmd[1] == 'd' && cmd[2] == ' '){
-      // Chdir must be called by the parent, not the child.
-      cmd[strlen(cmd)-1] = 0;  // chop \n
-      if(chdir(cmd+3) < 0)
-        fprintf(2, "cannot cd %s\n", cmd+3);
-    } else {
-      if(fork1() == 0)
-        runcmd(parsecmd(cmd));
-      wait(0);
+    // ---------- BUILTINS (executados no processo pai) ----------
+
+    // cd
+    if(cmd[0] == 'c' && cmd[1] == 'd' &&
+      (cmd[2] == ' ' || cmd[2] == '\n' || cmd[2] == 0)) {
+
+      char *dir = cmd + 2;
+
+      // pula espaços
+      while(*dir == ' ')
+        dir++;
+
+      if(*dir == 0 || *dir == '\n') {
+        fprintf(2, "cd: expected argument\n");
+      } else {
+        // remove '\n'
+        dir[strlen(dir) - 1] = 0;
+        if(chdir(dir) < 0)
+          fprintf(2, "cd: cannot cd %s\n", dir);
+      }
+      continue;
     }
+
+    // setpath
+    if(cmd[0] == 's' && cmd[1] == 'e' && cmd[2] == 't' &&
+      cmd[3] == 'p' && cmd[4] == 'a' && cmd[5] == 't' &&
+      cmd[6] == 'h' &&
+      (cmd[7] == ' ' || cmd[7] == '\n' || cmd[7] == 0)) {
+
+      char *p = cmd + 7;
+
+      while(*p == ' ')
+        p++;
+
+      if(*p == 0 || *p == '\n') {
+        fprintf(2, "usage: setpath dir:dir:...\n");
+      } else {
+        p[strlen(p) - 1] = 0;  // remove '\n'
+        set_path(p);
+      }
+      continue;
+    }
+
+    // printpath
+    if(cmd[0] == 'p' && cmd[1] == 'r' && cmd[2] == 'i' &&
+      cmd[3] == 'n' && cmd[4] == 't' && cmd[5] == 'p' &&
+      cmd[6] == 'a' && cmd[7] == 't' && cmd[8] == 'h' &&
+      (cmd[9] == '\n' || cmd[9] == 0)) {
+
+      print_path();
+      continue;
+    }
+
+    // ---------- COMANDOS EXTERNOS ----------
+    if(fork1() == 0)
+      runcmd(parsecmd(cmd));
+    wait(0);
+
   } // ESC [ A B C D 
   exit(0);
 }
