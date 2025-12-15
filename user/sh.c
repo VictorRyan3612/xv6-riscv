@@ -199,41 +199,47 @@ void print_path(void) {
 
 // try to exec cmd by searching shell_path directories (returns -1 if not found)
 // note: exec replaces process on success so function returns only on failure
-int find_in_path(char *cmd, char **argv) {
+int
+find_in_path(char *cmd, char **argv)
+{
   char dirbuf[PATH_MAX];
   char path2[PATH_MAX];
   int len = strlen(shell_path);
   int i = 0;
 
-  while (i <= len) {
-    // extract next dir into dirbuf
+  while (i < len) {
     int j = 0;
-    while (i <= len && shell_path[i] != ':' && shell_path[i] != '\0') {
-      if (j < PATH_MAX-2) dirbuf[j++] = shell_path[i];
+
+    // copia próximo diretório
+    while (i < len && shell_path[i] != ':') {
+      if (j < PATH_MAX-1)
+        dirbuf[j++] = shell_path[i];
       i++;
     }
     dirbuf[j] = 0;
 
-    // interpret empty dir as "."
-    if (j == 0) {
+    // pula ':'
+    if (i < len && shell_path[i] == ':')
+      i++;
+
+    // diretório vazio = "."
+    if (dirbuf[0] == 0) {
       dirbuf[0] = '.';
       dirbuf[1] = 0;
     }
 
-    // build path2 = dirbuf + "/" + cmd (with bounds checking)
+    // monta caminho completo
     int p = 0;
-    int k = 0;
-    while (dirbuf[k] && p < PATH_MAX-1) path2[p++] = dirbuf[k++];
-    if (p < PATH_MAX-1) path2[p++] = '/';
-    k = 0;
-    while (cmd[k] && p < PATH_MAX-1) path2[p++] = cmd[k++];
+    for (j = 0; dirbuf[j] && p < PATH_MAX-1; j++)
+      path2[p++] = dirbuf[j];
+    if (p < PATH_MAX-1)
+      path2[p++] = '/';
+    for (j = 0; cmd[j] && p < PATH_MAX-1; j++)
+      path2[p++] = cmd[j];
     path2[p] = 0;
 
-    // try exec
     exec(path2, argv);
-    // if exec returns, it failed -> try next
-
-    if (shell_path[i] == ':') i++;
+    // se voltar, tenta próximo
   }
 
   return -1;
