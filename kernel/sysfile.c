@@ -512,120 +512,101 @@ int
 copycwd(uint64 ubuf, int size)
 {
   struct proc *p = myproc();
+  struct inode *root = namei("/");
+  struct inode *ip   = idup(p->cwd);   // cwd atual
 
-  // pilha de componentes (nomes) do caminho, em ordem invertida
-  char comps[32][DIRSIZ+1];
-  int depth = 0;
-
-  // inode atual (cwd) e auxiliares
-  struct inode *ip = idup(p->cwd);   // +1 ref
-  struct inode *parent = 0;
-  struct inode *root = namei("/");   // raiz
-
-  if(ip == 0 || root == 0){
+  if(!ip || !root){
     if(ip) iput(ip);
     if(root) iput(root);
     return -1;
   }
 
-  ilock(ip); // travamos o cwd para ler metadados
+  // pilha de nomes
+  char comps[32][DIRSIZ+1];
+  int depth = 0;
 
-  // Sobe até a raiz coletando nomes
-  for(;;){
-    // chegou na raiz? (mesmo dev e mesmo inum)
-    if(ip->dev == root->dev && ip->inum == root->inum){
-      iunlock(ip);
-      iput(ip);      // -1 ref
-      break;
-    }
+  ilock(ip);
 
-    // pegar pai via ".."
-    uint child_inum = ip->inum;
-    parent = dirlookup(ip, "..", 0); // retorna inode do pai (destravado)
-    iunlock(ip);                     // não precisamos mais do filho travado
-    iput(ip);                        // -1 ref do filho
+  // sobe até a raiz
+  while(!(ip->dev == root->dev && ip->inum == root->inum)){
+    uint child = ip->inum;
+    struct inode *parent = dirlookup(ip, "..", 0);
 
-    if(parent == 0){
+    iunlock(ip);
+    iput(ip);
+
+    if(!parent){
       iput(root);
       return -1;
     }
 
     ilock(parent);
 
-    // varrer diretório do pai procurando a entrada cujo inum == child_inum
+    // procurar nome no pai
     struct dirent de;
     int found = 0;
+
     for(uint off = 0; off < parent->size; off += sizeof(de)){
       if(readi(parent, 0, (uint64)&de, off, sizeof(de)) != sizeof(de)){
-        // erro de leitura
-        iunlockput(parent); // unlock + put
+        iunlockput(parent);
         iput(root);
         return -1;
       }
-      if(de.inum == 0) continue;
-      if(de.inum == child_inum){
-        // copiar nome (DIRSIZ chars, precisamos garantir NUL)
-        int n = DIRSIZ;
-        while(n > 0 && de.name[n-1] == 0) n--;  // aparar zeros no fim
-        if(n > DIRSIZ) n = DIRSIZ;
-        if(depth >= (int)(sizeof(comps)/sizeof(comps[0]))){
+
+      if(de.inum == child){
+        if(depth >= 32){
           iunlockput(parent);
           iput(root);
-          return -1; // caminho profundo demais pra nossa pilha
+          return -1;
         }
-        // zera e copia nome
-        for(int i = 0; i < DIRSIZ+1; i++) comps[depth][i] = 0;
-        memmove(comps[depth], de.name, n);
+        // copiar nome e garantir '\0'
+        memmove(comps[depth], de.name, DIRSIZ);
+        comps[depth][DIRSIZ] = 0;
         depth++;
         found = 1;
         break;
       }
     }
 
-    // Próxima iteração: agora o "ip" passa a ser o pai
     if(!found){
       iunlockput(parent);
       iput(root);
       return -1;
     }
-    // mantém o pai travado para próxima volta
-    ip = parent;     // ip (travado) vira o atual
-    parent = 0;
-    // volta pro topo do loop
+
+    ip = parent;   // continua subindo (ip continua travado)
   }
 
-  // Montar a string final: "/" + comps em ordem reversa, separados por '/'
+  // agora ip está na raiz
+  iunlock(ip);
+  iput(ip);
+  iput(root);
+
+  // montar string final
   char out[MAXPATH];
   int pos = 0;
   out[pos++] = '/';
 
   for(int i = depth - 1; i >= 0; i--){
     int n = strlen(comps[i]);
-    if(n == 0) continue; // ignora componentes vazios (defensivo)
-    if(pos + n + 1 >= MAXPATH){
-      iput(root);
-      return -1; // sem espaço
-    }
+    if(n == 0) continue;
+    if(pos + n + 1 >= MAXPATH)
+      return -1;
     memmove(out + pos, comps[i], n);
     pos += n;
-    if(i > 0) out[pos++] = '/';
+    if(i) out[pos++] = '/';
   }
 
   out[pos] = 0;
 
-  // Caso especial: se depth==0, estamos na raiz → out já é "/"
-  // Copiar pro espaço do usuário
-  int outlen = strlen(out) + 1;
-  if(outlen > size){
-    iput(root);
+  // copiar p/ usuário
+  int outlen = pos + 1;
+  if(outlen > size)
     return -1;
-  }
-  if(copyout(p->pagetable, ubuf, out, outlen) < 0){
-    iput(root);
-    return -1;
-  }
 
-  iput(root);
+  if(copyout(p->pagetable, ubuf, out, outlen) < 0)
+    return -1;
+
   return 0;
 }
 
