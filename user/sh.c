@@ -339,45 +339,13 @@ runcmd(struct cmd *cmd)
 
   case EXEC:
     ecmd = (struct execcmd*)cmd;
-    if(ecmd->argv[0] == 0){
+    if(ecmd->argv[0] == 0)
       exit(1);
-    }
 
-    // Builtin: cd
-    if(strcmp(ecmd->argv[0], "cd") == 0){
-      if(ecmd->argv[1] == 0){
-        fprintf(2, "cd: expected argument\n");
-      } else {
-        if(chdir(ecmd->argv[1]) < 0){
-          fprintf(2, "cd: cannot cd %s\n", ecmd->argv[1]);
-        }
-      }
-      exit(0);  // don't fork/exec, just return
-    }
-
-    // Builtin: setpath
-    if(strcmp(ecmd->argv[0], "setpath") == 0) {
-      if(ecmd->argv[1] == 0) {
-        fprintf(2, "usage: setpath dir:dir:...\n");
-      } else {
-        set_path(ecmd->argv[1]);
-      }
-      exit(0);
-    }
-    // Builtin: printpath
-    if(strcmp(ecmd->argv[0], "printpath") == 0) {
-      print_path();
-      exit(0);
-    }
-
-    // If command contains '/', try to exec it directly
     if(strchr(ecmd->argv[0], '/')) {
       exec(ecmd->argv[0], ecmd->argv);
-      // if exec returns -> failed, fall through to error
     } else {
-      // Try lookup in PATH
       if(find_in_path(ecmd->argv[0], ecmd->argv) < 0) {
-        // not found in PATH; as fallback try /<cmd> (root) like you had before
         char fallback[128];
         fallback[0] = '/';
         strncpy(fallback + 1, ecmd->argv[0], sizeof(fallback)-2);
@@ -386,8 +354,9 @@ runcmd(struct cmd *cmd)
       }
     }
 
+    // ⛔ Se chegou aqui, TODAS as exec falharam
     fprintf(2, "exec %s failed\n", ecmd->argv[0]);
-    break;
+    exit(1);
 
 case REDIR:
     rcmd = (struct redircmd*)cmd;
